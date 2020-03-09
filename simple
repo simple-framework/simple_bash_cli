@@ -21,6 +21,8 @@ usage()
     docker { ls | ps }
     validate { install | config | pre_deploy | deploy }
 EOF
+
+    exit 1
 }
 
 compiler_dir=~/simple_grid_yaml_compiler
@@ -31,7 +33,7 @@ conf=$confdir/site_level_config_file.yaml
 compiled_conf=$confdir/augmented_site_level_config_file.yaml
 lc_file=/etc/simple_grid/lc
 
-logdir=/var/log/simple_grid
+logdir=/var/log/simple
 stamp=`date +%y%m%d-%H%M%S`
 err_=$logdir/simple-$stamp-err-
 out_=$logdir/simple-$stamp-out-
@@ -214,7 +216,6 @@ validate)
     *)
 	echo "$0: $1 requires a valid stage as argument" >&2
 	usage
-	exit
     esac
 
     simple_infra_validation_engine validate -vvv -f $compiled_conf $stage > $out 2> $err

@@ -1,0 +1,229 @@
+#!/bin/sh
+# simple - CLI for the SIMPLE Framework
+# v0.2 - 2020/03/08
+# authors: Maarten.Litmaath@cern.ch, Mayank.Sharma@cern.ch
+
+usage()
+{
+    echo "Usage: $0 command [args]" >&2
+    echo "Commands [args]:" >&2
+    cat >&2 << EOF
+    create-template
+    pre-compile
+    install-cm
+    install-lc CM_hostname
+    cm-stage
+    lc-stage
+    check-stage { install | config | pre_deploy | deploy | final }
+    rollback-to { config [lc] | pre_deploy | deploy [rmi] }
+    pre-deploy
+    deploy
+    docker { ls | ps }
+    validate { install | config | pre_deploy | deploy }
+EOF
+}
+
+compiler_dir=~/simple_grid_yaml_compiler
+installed_pip=$compiler_dir/.installed_pip
+installed_compiler=$compiler_dir/.installed_compiler
+confdir=/etc/simple_grid/site_config
+conf=$confdir/site_level_config_file.yaml
+compiled_conf=$confdir/augmented_site_level_config_file.yaml
+lc_file=/etc/simple_grid/lc
+
+logdir=/var/log/simple_grid
+stamp=`date +%y%m%d-%H%M%S`
+err_=$logdir/simple-$stamp-err-
+out_=$logdir/simple-$stamp-out-
+
+mp=/etc/puppetlabs/code/environments/production/modules
+sg_i=simple_grid::install
+cm_i=$sg_i::config_master::simple_installer
+lc_i=$sg_i::lightweight_component::simple_installer
+
+mkdir -p $logdir || exit
+
+case $1 in
+create-template)
+    log=$1.txt out=$out_$log err=$err_$log
+
+    c="class{'$cm_i::create_sample_site_level_config_file':}"
+    puppet apply -e "$c" > $out 2> $err &&
+    echo "The template has been created in $conf" ||
+    echo "The command finished with exit code $?"
+    ;;
+
+###############################################################################
+pre-compile)
+    log=$1.txt out=$out_$log err=$err_$log
+
+    [ -e $installed_pip ] || (
+	mkdir -p $compiler_dir/.temp && cd $compiler_dir &&
+	yum install -y python-pip && pip install --upgrade pip &&
+	touch $installed_pip
+    ) || exit
+
+    cd $compiler_dir
+    pip install virtualenv || exit
+    virtualenv .env || exit
+    source ./.env/bin/activate
+
+    [ -e $installed_compiler ] || (
+	pip install simple-grid-yaml-compiler && touch $installed_compiler
+    ) || exit
+
+    simple_grid_yaml_compiler $conf -o output.yaml -s schema.yaml > $out 2> $err
+
+    echo "The command finished with exit code $?"
+
+    deactivate
+    pip uninstall virtualenv
+    ;;
+
+###############################################################################
+install-cm)
+    log=$1.txt out=$out_$log err=$err_$log
+
+    puppet apply --modulepath $mp -e "class{'$cm_i':}" > $out 2> $err
+
+    echo "The command finished with exit code $?"
+    ;;
+
+###############################################################################
+install-lc)
+    log=$1.txt out=$out_$log err=$err_$log
+
+    case $2 in
+    *.*.*)
+	:
+	;;
+    *)
+	echo "$0: $1 requires CM hostname as argument" >&2
+	exit 1
+    esac
+
+    c="class{'$lc_i':puppet_master => '$2'}"
+    puppet apply --modulepath $mp -e "$c" > $out 2> $err
+
+    echo "The command finished with exit code $?"
+    ;;
+
+###############################################################################
+cm-stage)
+    puppet facts| grep simple_stage
+    ;;
+
+###############################################################################
+lc-stage)
+    bolt command run 'puppet facts| grep simple_stage' -t @$lc_file
+    ;;
+
+###############################################################################
+check-stage)
+    case $2 in
+    install|config|pre_deploy|deploy|final)
+	:
+	;;
+    *)
+	echo "$0: $1 requires a valid state name as argument" >&2
+	usage
+    esac
+
+    a=augmented_site_level_config_file
+
+    bolt task run simple_grid::check_stage $a=$confdir/$a.yaml \
+    site_infrastructure_key=site_infrastructure expected_stage=$2 -t localhost
+    ;;
+
+###############################################################################
+rollback-to)
+    log=$1.txt out=$out_$log err=$err_$log
+
+    case $2 in
+    config|pre_deploy|deploy)
+	:
+	;;
+    *)
+	echo "$0: $1 requires a valid state name as argument" >&2
+	usage
+    esac
+
+    case $2:$3 in
+    config:lc)
+	c='class{"simple_grid::config::lightweight_component::rollback":}'
+	bolt command run "puppet apply -e '$c'" -t @$lc_file > $out 2> $err
+	echo "The command finished with exit code $?"
+	exit
+	;;
+    deploy:rmi)
+	rmi='remove_images => true'
+	;;
+    *)
+	rmi=
+    esac
+
+    c="class{'simple_grid::$2::config_master::rollback':$rmi}"
+    puppet apply -e "$c" > $out 2> $err
+
+    echo "The command finished with exit code $?"
+    ;;
+
+###############################################################################
+pre-deploy|deploy)
+    log=$1.txt out=$out_$log err=$err_$log
+
+    puppet agent -t > $out 2> $err
+
+    echo "The command finished with exit code $?"
+    ;;
+
+###############################################################################
+docker)
+    case $2 in
+    ls)
+	cmd='image ls'
+	;;
+    ps)
+	cmd='ps -a'
+	;;
+    *)
+	echo "$0: unexpected argument of docker command" >&2
+	usage
+    esac
+
+    bolt command run "docker $cmd" -t @$lc_file
+    ;;
+
+###############################################################################
+validate)
+    log=$1.txt out=$out_$log err=$err_$log
+
+    case $2 in
+    install)
+	stage='install'
+	;;
+    config)
+	stage='config'
+	;;
+    pre_deploy)
+	stage='pre_deploy'
+	;;
+    deploy)
+	stage='deploy'
+	;;
+    *)
+	echo "$0: $1 requires a valid stage as argument" >&2
+	usage
+	exit
+    esac
+
+    simple_infra_validation_engine validate -vvv -f $compiled_conf $stage > $out 2> $err
+
+    echo "The command finished with exit code $?"
+    ;;
+
+###############################################################################
+*)
+    usage
+esac
+

@@ -30,10 +30,12 @@ EOF
 
     exit 1
 }
-
-compiler_dir=~/simple_grid_yaml_compiler
-installed_pip=$compiler_dir/.installed_pip
+cli_conf_dir=~/.simple
+compiler_dir=$cli_conf_dir/simple_grid_yaml_compiler
+compiler_env=$compiler_dir/.env
+installed_pip=$cli_conf_dir/.installed_pip
 installed_compiler=$compiler_dir/.installed_compiler
+installed_virtualenv=$cli_conf_dir/.installed_virtualenv
 confdir=/etc/simple_grid/site_config
 conf=$confdir/site_level_config_file.yaml
 compiled_conf=$confdir/augmented_site_level_config_file.yaml
@@ -69,26 +71,31 @@ create-template)
 ###############################################################################
 pre-compile)
     (
+	[ -e $cli_conf_dir ] || (
+	    mkdir $cli_conf_dir
+	) || exit
+  
 	[ -e $installed_pip ] || (
-	    mkdir -p $compiler_dir/.temp && cd $compiler_dir &&
+	    mkdir -p $compiler_dir/.temp &&
 	    yum install -y python-pip && pip install --upgrade pip &&
 	    touch $installed_pip
 	) || exit
-
-	cd $compiler_dir
-	pip install virtualenv || exit
-	virtualenv .env || exit
-	source ./.env/bin/activate
-
-	[ -e $installed_compiler ] || (
-	    pip install simple-grid-yaml-compiler && touch $installed_compiler
+	
+	[ -e $installed_virtualenv ] || (
+	    yum install -y python-virtualenv && touch $installed_virtualenv
 	) || exit
 
+	[ -e $installed_compiler ] || (
+	    virtualenv $compiler_env
+	    source $compiler_env/bin/activate && pip install simple-grid-yaml-compiler && touch $installed_compiler
+	) || exit
+
+	cd $compiler_dir
+	source $compiler_env/bin/activate
 	simple_grid_yaml_compiler $conf -o output.yaml -s schema.yaml
 	val=$?
 
 	deactivate
-	pip uninstall virtualenv
 
 	exit $val
 

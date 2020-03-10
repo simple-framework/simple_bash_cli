@@ -249,9 +249,9 @@ validate)
 	[ -e $installed_git ] || (
 	    yum install -y git && touch $installed_git
 	) || exit
-	echo $validator_dir
-        [ -e $installed_validator ] || (
-            mkdir -p $validator_dir &&  cd $validator_dir && pwd &&
+        
+	[ -e $installed_validator ] || (
+            mkdir -p $validator_dir &&  cd $validator_dir &&
 	    git clone "$validator_url" $validator_dir &&
 	    virtualenv $validator_env && source $validator_env/bin/activate &&
 	    pip install -r requirements.txt && pip install $validator_dir &&

@@ -100,8 +100,6 @@ pre-compile)
 	simple_grid_yaml_compiler $conf -o output.yaml -s schema.yaml
 	val=$?
 
-	deactivate
-
 	exit $val
 
     ) > $out 2> $err
@@ -255,7 +253,7 @@ validate)
 	    git clone "$validator_url" $validator_dir &&
 	    virtualenv $validator_env && source $validator_env/bin/activate &&
 	    pip install -r requirements.txt && pip install $validator_dir &&
-	    deactivate && touch $installed_validator
+	    touch $installed_validator
         ) || exit
     ) > $out 2> $err	
     case $2 in

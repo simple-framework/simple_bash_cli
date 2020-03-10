@@ -267,7 +267,7 @@ validate)
     esac
 	
     source $validator_env/bin/activate
-    $validation_cmd $2 > $out 2> $err
+    $validation_cmd $2 >> $out 2>> $err
         
     val=$?
 	

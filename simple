@@ -36,6 +36,11 @@ compiler_env=$compiler_dir/.env
 installed_pip=$cli_conf_dir/.installed_pip
 installed_compiler=$compiler_dir/.installed_compiler
 installed_virtualenv=$cli_conf_dir/.installed_virtualenv
+installed_git=$cli_conf_dir/.installed_git
+validator_dir=$cli_conf_dir/validator
+installed_validator=$validator_dir/.installed_validator
+validator_env=$validator_dir/.env
+validator_url='http://github.com/simple-framework/simple_grid_infra_validation_engine'
 confdir=/etc/simple_grid/site_config
 conf=$confdir/site_level_config_file.yaml
 compiled_conf=$confdir/augmented_site_level_config_file.yaml
@@ -227,16 +232,46 @@ docker)
 
 ###############################################################################
 validate)
+    (
+	[ -e $cli_conf_dir ] || (
+            mkdir $cli_conf_dir
+        ) || exit
+
+        [ -e $installed_pip ] || (
+            yum install -y python-pip && pip install --upgrade pip &&
+            touch $installed_pip
+        ) || exit
+
+        [ -e $installed_virtualenv ] || (
+            yum install -y python-virtualenv && touch $installed_virtualenv
+        ) || exit
+
+	[ -e $installed_git ] || (
+	    yum install -y git && touch $installed_git
+	) || exit
+	echo $validator_dir
+        [ -e $installed_validator ] || (
+            mkdir -p $validator_dir &&  cd $validator_dir && pwd &&
+	    git clone "$validator_url" $validator_dir &&
+	    virtualenv $validator_env && source $validator_env/bin/activate &&
+	    pip install -r requirements.txt && pip install $validator_dir &&
+	    deactivate && touch $installed_validator
+        ) || exit
+    ) > $out 2> $err	
     case $2 in
     install|config|pre_deploy|deploy)
-	;;
+        ;;
     *)
-	echo "$0: $1 requires a valid stage as argument" >&2
-	usage
+    echo "$0: $1 requires a valid stage as argument" >&2
+    usage
     esac
-
+	
+    source $validator_env/bin/activate
     $validation_cmd $2 > $out 2> $err
+        
     val=$?
+	
+    deactivate
     ;;
 
 ###############################################################################

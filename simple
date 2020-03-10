@@ -1,6 +1,6 @@
 #!/bin/sh
 # simple - CLI for the SIMPLE Framework
-# v0.4 - 2020/03/09
+# v0.5 - 2020/03/10
 # authors: Maarten.Litmaath@cern.ch, Mayank.Sharma@cern.ch
 
 logdir=/var/log/simple
@@ -30,10 +30,17 @@ EOF
 
     exit 1
 }
-
-compiler_dir=~/simple_grid_yaml_compiler
-installed_pip=$compiler_dir/.installed_pip
+cli_conf_dir=~/.simple
+compiler_dir=$cli_conf_dir/simple_grid_yaml_compiler
+compiler_env=$compiler_dir/.env
+installed_pip=$cli_conf_dir/.installed_pip
 installed_compiler=$compiler_dir/.installed_compiler
+installed_virtualenv=$cli_conf_dir/.installed_virtualenv
+installed_git=$cli_conf_dir/.installed_git
+validator_dir=$cli_conf_dir/validator
+installed_validator=$validator_dir/.installed_validator
+validator_env=$validator_dir/.env
+validator_url='http://github.com/simple-framework/simple_grid_infra_validation_engine'
 confdir=/etc/simple_grid/site_config
 conf=$confdir/site_level_config_file.yaml
 compiled_conf=$confdir/augmented_site_level_config_file.yaml
@@ -69,26 +76,31 @@ create-template)
 ###############################################################################
 pre-compile)
     (
+	[ -e $cli_conf_dir ] || (
+	    mkdir $cli_conf_dir
+	) || exit
+  
 	[ -e $installed_pip ] || (
-	    mkdir -p $compiler_dir/.temp && cd $compiler_dir &&
+	    mkdir -p $compiler_dir/.temp &&
 	    yum install -y python-pip && pip install --upgrade pip &&
 	    touch $installed_pip
 	) || exit
-
-	cd $compiler_dir
-	pip install virtualenv || exit
-	virtualenv .env || exit
-	source ./.env/bin/activate
-
-	[ -e $installed_compiler ] || (
-	    pip install simple-grid-yaml-compiler && touch $installed_compiler
+	
+	[ -e $installed_virtualenv ] || (
+	    yum install -y python-virtualenv && touch $installed_virtualenv
 	) || exit
 
+	[ -e $installed_compiler ] || (
+	    virtualenv $compiler_env
+	    source $compiler_env/bin/activate && pip install simple-grid-yaml-compiler && touch $installed_compiler
+	) || exit
+
+	cd $compiler_dir
+	source $compiler_env/bin/activate
 	simple_grid_yaml_compiler $conf -o output.yaml -s schema.yaml
 	val=$?
 
 	deactivate
-	pip uninstall virtualenv
 
 	exit $val
 
@@ -220,16 +232,46 @@ docker)
 
 ###############################################################################
 validate)
+    (
+	[ -e $cli_conf_dir ] || (
+            mkdir $cli_conf_dir
+        ) || exit
+
+        [ -e $installed_pip ] || (
+            yum install -y python-pip && pip install --upgrade pip &&
+            touch $installed_pip
+        ) || exit
+
+        [ -e $installed_virtualenv ] || (
+            yum install -y python-virtualenv && touch $installed_virtualenv
+        ) || exit
+
+	[ -e $installed_git ] || (
+	    yum install -y git && touch $installed_git
+	) || exit
+        
+	[ -e $installed_validator ] || (
+            mkdir -p $validator_dir &&  cd $validator_dir &&
+	    git clone "$validator_url" $validator_dir &&
+	    virtualenv $validator_env && source $validator_env/bin/activate &&
+	    pip install -r requirements.txt && pip install $validator_dir &&
+	    deactivate && touch $installed_validator
+        ) || exit
+    ) > $out 2> $err	
     case $2 in
     install|config|pre_deploy|deploy)
-	;;
+        ;;
     *)
-	echo "$0: $1 requires a valid stage as argument" >&2
-	usage
+    echo "$0: $1 requires a valid stage as argument" >&2
+    usage
     esac
-
-    $validation_cmd $2 > $out 2> $err
+	
+    source $validator_env/bin/activate
+    $validation_cmd $2 >> $out 2>> $err
+        
     val=$?
+	
+    deactivate
     ;;
 
 ###############################################################################

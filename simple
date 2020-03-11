@@ -1,6 +1,6 @@
 #!/bin/sh
 # simple - CLI for the SIMPLE Framework
-# v0.5 - 2020/03/10
+# v0.6 - 2020/03/11
 # authors: Maarten.Litmaath@cern.ch, Mayank.Sharma@cern.ch
 
 logdir=/var/log/simple
@@ -31,6 +31,7 @@ EOF
 
     exit 1
 }
+
 cli_conf_dir=~/.simple
 compiler_dir=$cli_conf_dir/simple_grid_yaml_compiler
 compiler_env=$compiler_dir/.env
@@ -52,6 +53,7 @@ lc_file=/etc/simple_grid/lc
 lc_extractor_url="https://raw.githubusercontent.com/simple-framework/simple_bash_cli/master/extract-lc.py"
 lc_extractor_dir=$cli_conf_dir/lc_extractor
 lc_extractor_env=$lc_extractor_dir/.env
+
 stamp=`date +%y%m%d-%H%M%S`
 err_=$logdir/simple-$stamp-err-
 out_=$logdir/simple-$stamp-out-
@@ -60,6 +62,46 @@ mp=/etc/puppetlabs/code/environments/production/modules
 sg_i=simple_grid::install
 cm_i=$sg_i::config_master::simple_installer
 lc_i=$sg_i::lightweight_component::simple_installer
+
+
+prepare_cli()
+{
+    [ -e $cli_conf_dir ] || (
+	mkdir $cli_conf_dir
+    ) || return
+
+    [ -e $installed_pip ] || (
+	mkdir -p $compiler_dir/.temp &&
+	yum install -y python-pip && pip install --upgrade pip &&
+	touch $installed_pip
+    ) || return
+
+    [ -e $installed_virtualenv ] || (
+	yum install -y python-virtualenv && touch $installed_virtualenv
+    ) || return
+}
+
+run_validation()
+{
+    (
+	prepare_cli || exit
+
+	[ -e $installed_git ] || (
+	    yum install -y git && touch $installed_git
+	) || exit
+
+	[ -e $installed_validator ] || (
+	    mkdir -p $validator_dir && cd $validator_dir &&
+	    git clone "$validator_url" $validator_dir &&
+	    virtualenv $validator_env && source $validator_env/bin/activate &&
+	    pip install -r requirements.txt && pip install $validator_dir &&
+	    touch $installed_validator
+	) || exit
+
+	source $validator_env/bin/activate
+	$validation_cmd $1
+    )
+}
 
 
 case "${1:-?}" in
@@ -81,32 +123,16 @@ create-template)
 ###############################################################################
 pre-compile)
     (
-	[ -e $cli_conf_dir ] || (
-	    mkdir $cli_conf_dir
-	) || exit
-  
-	[ -e $installed_pip ] || (
-	    mkdir -p $compiler_dir/.temp &&
-	    yum install -y python-pip && pip install --upgrade pip &&
-	    touch $installed_pip
-	) || exit
-	
-	[ -e $installed_virtualenv ] || (
-	    yum install -y python-virtualenv && touch $installed_virtualenv
-	) || exit
+	prepare_cli || exit
 
 	[ -e $installed_compiler ] || (
-	    virtualenv $compiler_env
-	    source $compiler_env/bin/activate && pip install simple-grid-yaml-compiler
+	    virtualenv $compiler_env && source $compiler_env/bin/activate &&
+	    pip install simple-grid-yaml-compiler && touch $installed_compiler
 	) || exit
 
 	cd $compiler_dir
 	source $compiler_env/bin/activate
 	simple_grid_yaml_compiler $conf -o output.yaml -s schema.yaml
-	val=$?
-
-	exit $val
-
     ) > $out 2> $err
     ;;
 
@@ -115,6 +141,21 @@ install-cm)
     echo 'This make take a few minutes...'
     puppet apply --modulepath $mp -e "class{'$cm_i':}" > $out 2> $err
     val=$?
+
+    stage=config
+    echo "Now validating the '$stage' stage..."
+
+    (
+	echo ''
+	echo ''
+	echo "==> Validating the '$stage' stage:"
+	echo ''
+	echo ''
+
+	$run_validation $stage
+    ) >> $out 2>> $err
+
+    let "val |= $?"
     ;;
 
 ###############################################################################
@@ -149,40 +190,44 @@ lc-stage)
 
 ###############################################################################
 check-stage)
-    case $2 in
+    stage=${2/-/_}
+
+    case $stage in
     install|config|pre_deploy|deploy|final)
 	:
 	;;
     *)
-	echo "$0: $1 requires a valid state name as argument" >&2
+	echo "$0: $1 requires a valid stage name as argument" >&2
 	usage
     esac
 
     bolt task run simple_grid::check_stage \
     augmented_site_level_config_file=$compiled_conf \
-    site_infrastructure_key=site_infrastructure expected_stage=$2 -t localhost
+    site_infrastructure_key=site_infrastructure expected_stage=$stage -t localhost
     exit
     ;;
 
 ###############################################################################
 rollback-to)
-    case $2 in
+    stage=${2/-/_}
+
+    case $stage in
     config|pre_deploy|deploy)
 	:
 	;;
     *)
-	echo "$0: $1 requires a valid state name as argument" >&2
+	echo "$0: $1 requires a valid stage name as argument" >&2
 	usage
     esac
 
-    case $2:$3 in
+    case $stage:$3 in
     config:lc)
 	c='class{"simple_grid::config::lightweight_component::rollback":}'
 
 	echo 'This make take a few minutes...'
 	bolt command run "puppet apply -e '$c'" -t @$lc_file > $out 2> $err
 	val=$?
-	echo "The command finished with exit code $?"
+	echo "The command finished with exit code $? (logs in $logdir)"
 	exit $val
 	;;
     deploy:rmi)
@@ -192,7 +237,7 @@ rollback-to)
 	rmi=
     esac
 
-    c="class{'simple_grid::$2::config_master::rollback':$rmi}"
+    c="class{'simple_grid::$stage::config_master::rollback':$rmi}"
 
     echo 'This make take a few minutes...'
     puppet apply -e "$c" > $out 2> $err
@@ -205,6 +250,21 @@ pre-deploy)
     puppet agent -t > $out 2> $err
     val=$?
     [ $val = 2 ] && echo "Ignoring exit code $val" && val=0
+
+    stage=pre_deploy
+    echo "Now validating the '$stage' stage..."
+
+    (
+	echo ''
+	echo ''
+	echo "==> Validating the '$stage' stage:"
+	echo ''
+	echo ''
+
+	run_validation $stage
+    ) >> $out 2>> $err
+
+    let "val |= $?"
     ;;
 
 ###############################################################################
@@ -213,6 +273,21 @@ deploy)
     puppet agent -t > $out 2> $err
     val=$?
     [ $val = 2 ] && echo "Ignoring exit code $val" && val=0
+
+    stage=deploy
+    echo "Now validating the '$stage' stage..."
+
+    (
+	echo ''
+	echo ''
+	echo "==> Validating the '$stage' stage:"
+	echo ''
+	echo ''
+
+	run_validation $stage
+    ) >> $out 2>> $err
+
+    let "val |= $?"
     ;;
 
 ###############################################################################
@@ -235,84 +310,44 @@ docker)
 
 ###############################################################################
 validate)
-    (
-	[ -e $cli_conf_dir ] || (
-            mkdir $cli_conf_dir
-        ) || exit
+    stage=${2/-/_}
 
-        [ -e $installed_pip ] || (
-            yum install -y python-pip && pip install --upgrade pip &&
-            touch $installed_pip
-        ) || exit
-
-        [ -e $installed_virtualenv ] || (
-            yum install -y python-virtualenv && touch $installed_virtualenv
-        ) || exit
-
-	[ -e $installed_git ] || (
-	    yum install -y git && touch $installed_git
-	) || exit
-        
-	[ -e $installed_validator ] || (
-            mkdir -p $validator_dir &&  cd $validator_dir &&
-	    git clone "$validator_url" $validator_dir &&
-	    virtualenv $validator_env && source $validator_env/bin/activate &&
-	    pip install -r requirements.txt && pip install $validator_dir &&
-	    touch $installed_validator
-        ) || exit
-    ) > $out 2> $err	
-    case $2 in
+    case $stage in
     install|config|pre_deploy|deploy)
+	:
         ;;
     *)
-    echo "$0: $1 requires a valid stage as argument" >&2
-    usage
+	echo "$0: $1 requires a valid stage as argument" >&2
+	usage
     esac
-	
-    source $validator_env/bin/activate
-    $validation_cmd $2 >> $out 2>> $err
-        
-    val=$?
-	
-    deactivate
+
+    run_validation $stage > $out 2> $err
     ;;
 
 ###############################################################################
 extract-lc)
     (
-	[ -e $cli_conf_dir ] || (
-            mkdir $cli_conf_dir
-        ) || exit
-
-        [ -e $installed_pip ] || (
-            yum install -y python-pip && pip install --upgrade pip &&
-            touch $installed_pip
-        ) || exit
-
-        [ -e $installed_virtualenv ] || (
-            yum install -y python-virtualenv && touch $installed_virtualenv
-        ) || exit
-	
-	[ -e $installed_wget  ] || (
-	    yum install -y wget && touch $installed_wget
-	) || exit 
+	prepare_cli || exit
 
 	[ -e $compiled_conf ] || (
-	    echo "Please execute simple install-cm to generate ${compiled_conf}"
-	) || exit 
+	    echo "Please execute 'simple install-cm' to generate $compiled_conf"
+	) || exit
 
-	[ -e $installed_lc_extractor  ] || (
+	[ -e $installed_wget ] || (
+	    yum install -y wget && touch $installed_wget
+	) || exit
+
+	[ -e $installed_lc_extractor ] || (
 	    mkdir -p $lc_extractor_dir &&
 	    wget -P  $lc_extractor_dir $lc_extractor_url &&
 	    virtualenv $lc_extractor_env &&
             source $lc_extractor_env/bin/activate && pip install argparse pyyaml &&
 	    touch $installed_lc_extractor
 	) || exit
-    ) >>$out 2>>$err || exit
-    source $lc_extractor_env/bin/activate
-    python $lc_extractor_dir/extract-lc.py -f $compiled_conf -o $lc_file >>$out >>$err 
-    val=$?
-    deactivate
+
+	source $lc_extractor_env/bin/activate
+	python $lc_extractor_dir/extract-lc.py -f $compiled_conf -o $lc_file
+    ) > $out 2> $err
     ;;
 
 ###############################################################################

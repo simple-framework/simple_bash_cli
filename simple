@@ -102,7 +102,7 @@ pre-compile)
 
 	cd $compiler_dir
 	source $compiler_env/bin/activate
-	simple_grid_yaml_compiler $conf -o output.yaml -s schema.yaml && touch $executed_compiler
+	simple_grid_yaml_compiler $conf -o output.yaml -s schema.yaml
 	val=$?
 
 	exit $val

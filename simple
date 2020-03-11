@@ -14,6 +14,7 @@ usage()
     cat >&2 << EOF
     create-template
     pre-compile
+    extract-lc
     install-cm
     install-lc CM_hostname
     cm-stage
@@ -37,6 +38,8 @@ installed_pip=$cli_conf_dir/.installed_pip
 installed_compiler=$compiler_dir/.installed_compiler
 installed_virtualenv=$cli_conf_dir/.installed_virtualenv
 installed_git=$cli_conf_dir/.installed_git
+installed_wget=$cli_coonf_dir/.installed_wget
+installed_lc_extractor=$cli_conf_dir/.installed_lc_extractor
 validator_dir=$cli_conf_dir/validator
 installed_validator=$validator_dir/.installed_validator
 validator_env=$validator_dir/.env
@@ -46,7 +49,9 @@ conf=$confdir/site_level_config_file.yaml
 compiled_conf=$confdir/augmented_site_level_config_file.yaml
 validation_cmd="simple_infra_validation_engine validate -vvv -f $compiled_conf"
 lc_file=/etc/simple_grid/lc
-
+lc_extractor_url="https://raw.githubusercontent.com/simple-framework/simple_bash_cli/master/extract-lc.py"
+lc_extractor_dir=$cli_conf_dir/lc_extractor
+lc_extractor_env=$lc_extractor_dir/.env
 stamp=`date +%y%m%d-%H%M%S`
 err_=$logdir/simple-$stamp-err-
 out_=$logdir/simple-$stamp-out-
@@ -92,12 +97,12 @@ pre-compile)
 
 	[ -e $installed_compiler ] || (
 	    virtualenv $compiler_env
-	    source $compiler_env/bin/activate && pip install simple-grid-yaml-compiler && touch $installed_compiler
+	    source $compiler_env/bin/activate && pip install simple-grid-yaml-compiler
 	) || exit
 
 	cd $compiler_dir
 	source $compiler_env/bin/activate
-	simple_grid_yaml_compiler $conf -o output.yaml -s schema.yaml
+	simple_grid_yaml_compiler $conf -o output.yaml -s schema.yaml && touch $executed_compiler
 	val=$?
 
 	exit $val
@@ -269,6 +274,44 @@ validate)
         
     val=$?
 	
+    deactivate
+    ;;
+
+###############################################################################
+extract-lc)
+    (
+	[ -e $cli_conf_dir ] || (
+            mkdir $cli_conf_dir
+        ) || exit
+
+        [ -e $installed_pip ] || (
+            yum install -y python-pip && pip install --upgrade pip &&
+            touch $installed_pip
+        ) || exit
+
+        [ -e $installed_virtualenv ] || (
+            yum install -y python-virtualenv && touch $installed_virtualenv
+        ) || exit
+	
+	[ -e $installed_wget  ] || (
+	    yum install -y wget && touch $installed_wget
+	) || exit 
+
+	[ -e $compiled_conf ] || (
+	    echo "Please execute simple install-cm to generate ${compiled_conf}"
+	) || exit 
+
+	[ -e $installed_lc_extractor  ] || (
+	    mkdir -p $lc_extractor_dir &&
+	    wget -P  $lc_extractor_dir $lc_extractor_url &&
+	    virtualenv $lc_extractor_env &&
+            source $lc_extractor_env/bin/activate && pip install argparse pyyaml &&
+	    touch $installed_lc_extractor
+	) || exit
+    ) >>$out 2>>$err || exit
+    source $lc_extractor_env/bin/activate
+    python $lc_extractor_dir/extract-lc.py -f $compiled_conf -o $lc_file >>$out >>$err 
+    val=$?
     deactivate
     ;;
 

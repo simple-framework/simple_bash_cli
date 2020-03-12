@@ -1,6 +1,6 @@
 #!/bin/sh
 # simple - CLI for the SIMPLE Framework
-# v0.7 - 2020/03/12
+# v0.8 - 2020/03/13
 # authors: Maarten.Litmaath@cern.ch, Mayank.Sharma@cern.ch
 
 logdir=/var/log/simple
@@ -135,6 +135,8 @@ pre-compile)
 	source $compiler_env/bin/activate
 	simple_grid_yaml_compiler $conf -o output.yaml -s schema.yaml
     ) > $out 2> $err
+
+    val=$?
     ;;
 
 ###############################################################################
@@ -161,6 +163,8 @@ extract-lc)
 	source $lc_extractor_env/bin/activate
 	python $lc_extractor_dir/extract-lc.py -f $compiled_conf -o $lc_file
     ) > $out 2> $err
+
+    val=$?
     ;;
 
 ###############################################################################
@@ -168,21 +172,6 @@ install-cm)
     echo 'This make take a few minutes...'
     puppet apply --modulepath $mp -e "class{'$cm_i':}" > $out 2> $err
     val=$?
-
-    stage=config
-    echo "Now validating the '$stage' stage..."
-
-    (
-	echo ''
-	echo ''
-	echo "==> Validating the '$stage' stage:"
-	echo ''
-	echo ''
-
-	$run_validation $stage
-    ) >> $out 2>> $err
-
-    let "val |= $?"
     ;;
 
 ###############################################################################
@@ -286,23 +275,25 @@ pre-deploy)
     val=$?
     [ $val = $warn ] && echo "Ignoring exit code $val" && val=0
 
-    stage=config
-    echo "Now validating the '$stage' stage..."
+    if [ $val = 0 ]
+    then
+	stage=config
+	echo "Now validating the '$stage' stage..."
 
-    (
-	echo ""
-	echo "==> Validating the '$stage' stage:"
-	echo ""
-	run_validation $stage
-    ) >> $out 2>> $err
+	(
+	    echo ""
+	    echo "==> Validating the '$stage' stage:"
+	    echo ""
+	    run_validation $stage
+	) >> $out 2>> $err
 
-    val=$?
-    [ $val = $warn ] && echo "Ignoring exit code $val" && val=0
-
-    stage=pre_deploy
+	val=$?
+	[ $val = $warn ] && echo "Ignoring exit code $val" && val=0
+    fi
 
     if [ $val = 0 ]
     then
+	stage=pre_deploy
 	echo "Now running the '$stage' stage."
 	echo 'This make take a few minutes...'
 
@@ -396,6 +387,7 @@ validate)
     esac
 
     run_validation $stage > $out 2> $err
+    val=$?
     ;;
 
 ###############################################################################

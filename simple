@@ -1,6 +1,6 @@
 #!/bin/sh
 # simple - CLI for the SIMPLE Framework
-# v0.6 - 2020/03/11
+# v0.7 - 2020/03/12
 # authors: Maarten.Litmaath@cern.ch, Mayank.Sharma@cern.ch
 
 logdir=/var/log/simple
@@ -57,6 +57,7 @@ lc_extractor_env=$lc_extractor_dir/.env
 stamp=`date +%y%m%d-%H%M%S`
 err_=$logdir/simple-$stamp-err-
 out_=$logdir/simple-$stamp-out-
+warn=3
 
 mp=/etc/puppetlabs/code/environments/production/modules
 sg_i=simple_grid::install
@@ -133,6 +134,32 @@ pre-compile)
 	cd $compiler_dir
 	source $compiler_env/bin/activate
 	simple_grid_yaml_compiler $conf -o output.yaml -s schema.yaml
+    ) > $out 2> $err
+    ;;
+
+###############################################################################
+extract-lc)
+    (
+	prepare_cli || exit
+
+	[ -e $compiled_conf ] || (
+	    echo "Please execute 'simple install-cm' to generate $compiled_conf"
+	) || exit
+
+	[ -e $installed_wget ] || (
+	    yum install -y wget && touch $installed_wget
+	) || exit
+
+	[ -e $installed_lc_extractor ] || (
+	    mkdir -p $lc_extractor_dir &&
+	    wget -P  $lc_extractor_dir $lc_extractor_url &&
+	    virtualenv $lc_extractor_env &&
+            source $lc_extractor_env/bin/activate && pip install argparse pyyaml &&
+	    touch $installed_lc_extractor
+	) || exit
+
+	source $lc_extractor_env/bin/activate
+	python $lc_extractor_dir/extract-lc.py -f $compiled_conf -o $lc_file
     ) > $out 2> $err
     ;;
 
@@ -246,48 +273,95 @@ rollback-to)
 
 ###############################################################################
 pre-deploy)
-    echo 'This make take a few minutes...'
-    puppet agent -t > $out 2> $err
-    val=$?
-    [ $val = 2 ] && echo "Ignoring exit code $val" && val=0
+    stage=install
+    echo "First validating the '$stage' stage..."
 
-    stage=pre_deploy
+    (
+	echo ""
+	echo "==> Validating the '$stage' stage:"
+	echo ""
+	run_validation $stage
+    ) > $out 2> $err
+
+    val=$?
+    [ $val = $warn ] && echo "Ignoring exit code $val" && val=0
+
+    stage=config
     echo "Now validating the '$stage' stage..."
 
     (
-	echo ''
-	echo ''
+	echo ""
 	echo "==> Validating the '$stage' stage:"
-	echo ''
-	echo ''
-
+	echo ""
 	run_validation $stage
     ) >> $out 2>> $err
 
-    let "val |= $?"
+    val=$?
+    [ $val = $warn ] && echo "Ignoring exit code $val" && val=0
+
+    stage=pre_deploy
+
+    if [ $val = 0 ]
+    then
+	echo "Now running the '$stage' stage."
+	echo 'This make take a few minutes...'
+
+	(
+	    echo ""
+	    echo "==> Running the '$stage' stage:"
+	    echo ""
+	    puppet agent -t
+	) >> $out 2>> $err
+
+	val=$?
+	[ $val = 2 ] && echo "Ignoring exit code $val" && val=0
+    fi
     ;;
 
 ###############################################################################
 deploy)
-    echo 'This make take ~15 minutes per container...'
-    puppet agent -t > $out 2> $err
-    val=$?
-    [ $val = 2 ] && echo "Ignoring exit code $val" && val=0
-
-    stage=deploy
-    echo "Now validating the '$stage' stage..."
+    stage=pre_deploy
+    echo "First validating the '$stage' stage..."
 
     (
-	echo ''
-	echo ''
+	echo ""
 	echo "==> Validating the '$stage' stage:"
-	echo ''
-	echo ''
-
+	echo ""
 	run_validation $stage
-    ) >> $out 2>> $err
+    ) > $out 2> $err
 
-    let "val |= $?"
+    val=$?
+    [ $val = $warn ] && echo "Ignoring exit code $val" && val=0
+
+    stage=deploy
+
+    if [ $val = 0 ]
+    then
+	echo "Now running the '$stage' stage."
+	echo 'This make take ~15 minutes per container...'
+
+	(
+	    echo ""
+	    echo "==> Running the '$stage' stage:"
+	    echo ""
+	    puppet agent -t
+	) >> $out 2>> $err
+
+	val=$?
+	[ $val = 2 ] && echo "Ignoring exit code $val" && val=0
+    fi
+
+    if [ $val = 0 ]
+    then
+	echo "Now validating the '$stage' stage..."
+
+	(
+	    echo ""
+	    echo "==> Validating the '$stage' stage:"
+	    echo ""
+	    run_validation $stage
+	) >> $out 2>> $err
+    fi
     ;;
 
 ###############################################################################
@@ -322,32 +396,6 @@ validate)
     esac
 
     run_validation $stage > $out 2> $err
-    ;;
-
-###############################################################################
-extract-lc)
-    (
-	prepare_cli || exit
-
-	[ -e $compiled_conf ] || (
-	    echo "Please execute 'simple install-cm' to generate $compiled_conf"
-	) || exit
-
-	[ -e $installed_wget ] || (
-	    yum install -y wget && touch $installed_wget
-	) || exit
-
-	[ -e $installed_lc_extractor ] || (
-	    mkdir -p $lc_extractor_dir &&
-	    wget -P  $lc_extractor_dir $lc_extractor_url &&
-	    virtualenv $lc_extractor_env &&
-            source $lc_extractor_env/bin/activate && pip install argparse pyyaml &&
-	    touch $installed_lc_extractor
-	) || exit
-
-	source $lc_extractor_env/bin/activate
-	python $lc_extractor_dir/extract-lc.py -f $compiled_conf -o $lc_file
-    ) > $out 2> $err
     ;;
 
 ###############################################################################

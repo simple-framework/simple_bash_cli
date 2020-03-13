@@ -1,6 +1,6 @@
 #!/bin/sh
 # simple - CLI for the SIMPLE Framework
-# v0.8 - 2020/03/13
+# v0.9 - 2020/03/13
 # authors: Maarten.Litmaath@cern.ch, Mayank.Sharma@cern.ch
 
 logdir=/var/log/simple
@@ -15,6 +15,7 @@ usage()
     create-template
     pre-compile
     extract-lc
+    install
     install-cm
     install-lc CM_hostname
     cm-stage
@@ -47,6 +48,7 @@ validator_env=$validator_dir/.env
 validator_url='http://github.com/simple-framework/simple_grid_infra_validation_engine'
 confdir=/etc/simple_grid/site_config
 conf=$confdir/site_level_config_file.yaml
+pre_compiled_conf=$compiler_dir/output.yaml
 compiled_conf=$confdir/augmented_site_level_config_file.yaml
 validation_cmd="simple_infra_validation_engine validate -vvv -f $compiled_conf"
 lc_file=/etc/simple_grid/lc
@@ -133,7 +135,7 @@ pre-compile)
 
 	cd $compiler_dir
 	source $compiler_env/bin/activate
-	simple_grid_yaml_compiler $conf -o output.yaml -s schema.yaml
+	simple_grid_yaml_compiler $conf -o $pre_compiled_conf -s schema.yaml
     ) > $out 2> $err
 
     val=$?
@@ -144,8 +146,8 @@ extract-lc)
     (
 	prepare_cli || exit
 
-	[ -e $compiled_conf ] || (
-	    echo "Please execute 'simple install-cm' to generate $compiled_conf"
+	[ -e $pre_compiled_conf ] || (
+	    echo "Please execute 'simple pre-compile' to generate $pre_compiled_conf"
 	) || exit
 
 	[ -e $installed_wget ] || (
@@ -161,10 +163,56 @@ extract-lc)
 	) || exit
 
 	source $lc_extractor_env/bin/activate
-	python $lc_extractor_dir/extract-lc.py -f $compiled_conf -o $lc_file
+	python $lc_extractor_dir/extract-lc.py -f $pre_compiled_conf -o $lc_file
     ) > $out 2> $err
 
     val=$?
+    ;;
+
+###############################################################################
+install)
+    stage=pre_install
+    echo "First validating the '$stage' stage..."
+
+    (
+	echo ""
+	echo "==> Validating the '$stage' stage:"
+	echo ""
+	run_validation $stage
+    ) > $out 2> $err
+
+    val=$?
+    [ $val = $warn ] && echo "Ignoring exit code $val" && val=0
+
+    if [ $val = 0 ]
+    then
+	echo "Now installing the CM."
+	echo 'This make take a few minutes...'
+	puppet apply --modulepath $mp -e "class{'$cm_i':}" >> $out 2>> $err
+	val=$?
+    fi
+
+    if [ $val = 0 ]
+    then
+	echo "Now installing the LC."
+	echo 'This make take a few minutes...'
+
+	CM=`hostname -f`
+	c="class{'$lc_i':puppet_master => '$CM'}"
+	cmd="puppet apply --modulepath $mp -e \"$c\""
+
+	echo 'This make take a few minutes...'
+
+	for lc in `cat $lc_file`
+	do
+	    echo "Launching on $lc"
+	    lcl=$1-$lc.txt
+	    ssh $lc "$cmd" < /dev/null > $out_$lcl 2> $err_$lcl &
+	done
+
+	echo "Waiting for the launched commands to return..."
+	wait
+    fi
     ;;
 
 ###############################################################################
@@ -378,7 +426,7 @@ validate)
     stage=${2/-/_}
 
     case $stage in
-    install|config|pre_deploy|deploy)
+    pre_install|install|config|pre_deploy|deploy)
 	:
         ;;
     *)

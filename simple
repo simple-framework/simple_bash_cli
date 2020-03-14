@@ -1,6 +1,6 @@
 #!/bin/sh
 # simple - CLI for the SIMPLE Framework
-# v0.94 - 2020/03/14
+# v0.95 - 2020/03/15
 # authors: Maarten.Litmaath@cern.ch, Mayank.Sharma@cern.ch
 
 logdir=/var/log/simple
@@ -12,12 +12,13 @@ usage()
     echo "Usage: $0 command [args]" >&2
     echo "Commands [args]:" >&2
     cat >&2 << EOF
+    pre-install-cm
     create-template
     pre-compile
     extract-lc
     generate-key
     test-ssh
-    pre-install
+    pre-install-lc
     install
     install-cm
     install-lc CM_hostname
@@ -71,6 +72,8 @@ out_=$logdir/simple-$stamp-out-
 warn=3
 
 puppet_repo=https://yum.puppetlabs.com/puppet5/puppet5-release-el-7.noarch.rpm
+install_rpm="rpm -ivh $puppet_repo; yum -y --disablerepo=cern install puppet-agent"
+install_mod="(. /etc/profile.d/puppet-agent.sh; puppet module install maany-simple_grid)"
 mp=/etc/puppetlabs/code/environments/production/modules
 sg_i=simple_grid::install
 cm_i=$sg_i::config_master::simple_installer
@@ -167,6 +170,13 @@ log=$1.txt out=$out_$log err=$err_$log
 val=0
 
 case $1 in
+pre-install-cm)
+    echo "Pre-installing the CM..."
+
+    (eval "$install_rpm puppetserver && $install_mod") > $out 2> $err || val=$?
+    ;;
+
+###############################################################################
 create-template)
     c="class{'$cm_i::create_sample_site_level_config_file':}"
 
@@ -260,30 +270,18 @@ test-ssh)
     ;;
 
 ###############################################################################
-pre-install)
+pre-install-lc)
     [ -e $tested_ssh ] || {
 	echo "Please run '$0 test-ssh' first" >&2
 	exit 1
     }
 
-    install_rpm="rpm -ivh $puppet_repo; yum -y install puppet-agent"
-    install_mod="puppet module install maany-simple_grid"
+    echo "Pre-installing the LC."
+    echo 'This make take a few minutes...'
 
-    echo "Pre-installing the CM..."
+    cmd="$install_rpm && $install_mod"
 
-    (
-	eval "$install_rpm puppetserver && $install_mod"
-    ) > $out 2> $err || val=$?
-
-    if [ $val = 0 ]
-    then
-	echo "Now pre-installing the LC."
-	echo 'This make take a few minutes...'
-
-	cmd="$install_rpm && $install_mod"
-
-	run_on_lc $1 "$cmd"
-    fi
+    run_on_lc $1 "$cmd"
     ;;
 
 ###############################################################################

@@ -1,6 +1,6 @@
 #!/bin/sh
 # simple - CLI for the SIMPLE Framework
-# v0.9 - 2020/03/13
+# v0.91 - 2020/03/14
 # authors: Maarten.Litmaath@cern.ch, Mayank.Sharma@cern.ch
 
 logdir=/var/log/simple
@@ -25,7 +25,7 @@ usage()
     pre-deploy
     deploy
     docker { ls | ps }
-    validate { install | config | pre_deploy | deploy }
+    validate { pre_install | install | config | pre_deploy | deploy }
 EOF
     echo "Logs in $logdir" >&2
     echo "" >&2
@@ -103,6 +103,9 @@ run_validation()
 
 	source $validator_env/bin/activate
 	$validation_cmd $1
+
+	echo "For now just exit 0..."
+	exit 0
     )
 }
 
@@ -120,7 +123,7 @@ create-template)
     c="class{'$cm_i::create_sample_site_level_config_file':}"
 
     puppet apply -e "$c" > $out 2> $err &&
-    echo "The template has been created in $conf" || val=$?
+    echo "The template has been created in $conf" && exit 0 || val=$?
     ;;
 
 ###############################################################################
@@ -163,7 +166,8 @@ extract-lc)
 	) || exit
 
 	source $lc_extractor_env/bin/activate
-	python $lc_extractor_dir/extract-lc.py -f $pre_compiled_conf -o $lc_file
+	python $lc_extractor_dir/extract-lc.py -f $pre_compiled_conf -o $lc_file &&
+	echo "" >> $lc_file
     ) > $out 2> $err
 
     val=$?
@@ -171,6 +175,9 @@ extract-lc)
 
 ###############################################################################
 install)
+    echo "This command is not supported yet: please use 'install-cm/lc' instead." >&2
+    exit 1
+
     stage=pre_install
     echo "First validating the '$stage' stage..."
 
@@ -202,16 +209,36 @@ install)
 	cmd="puppet apply --modulepath $mp -e \"$c\""
 
 	echo 'This make take a few minutes...'
+	pids=
 
 	for lc in `cat $lc_file`
 	do
 	    echo "Launching on $lc"
 	    lcl=$1-$lc.txt
 	    ssh $lc "$cmd" < /dev/null > $out_$lcl 2> $err_$lcl &
+	    pids="$pids $!"
 	done
 
 	echo "Waiting for the launched commands to return..."
-	wait
+
+	while [ ${pids:+x} ]
+	do
+	    sleep 5
+	    tmp=
+
+	    for p in $pids
+	    do
+		if kill -0 $p 2> /dev/null
+		then
+		    tmp="$tmp $p"
+		else
+		    wait $p
+		    let "val |= $?"
+		fi
+	    done
+
+	    pids=$tmp
+	done
     fi
     ;;
 
@@ -267,7 +294,8 @@ check-stage)
 
     bolt task run simple_grid::check_stage \
     augmented_site_level_config_file=$compiled_conf \
-    site_infrastructure_key=site_infrastructure expected_stage=$stage -t localhost
+    site_infrastructure_key=site_infrastructure expected_stage=$stage -t localhost 2>&1 |
+    sed -n '/^ *{ *$/,$p'
     exit
     ;;
 
@@ -376,30 +404,37 @@ deploy)
 
     if [ $val = 0 ]
     then
+	msg='==> Finished with exit code'
+
 	echo "Now running the '$stage' stage."
 	echo 'This make take ~15 minutes per container...'
+	echo "Please check stdout for '$msg' at the end:"
+	echo "stdout: $out"
+	echo "stderr: $err"
 
 	(
 	    echo ""
 	    echo "==> Running the '$stage' stage:"
 	    echo ""
 	    puppet agent -t
-	) >> $out 2>> $err
+	    val=$?
 
-	val=$?
-	[ $val = 2 ] && echo "Ignoring exit code $val" && val=0
-    fi
+	    [ $val = 2 ] && echo "Ignoring exit code $val" && val=0
 
-    if [ $val = 0 ]
-    then
-	echo "Now validating the '$stage' stage..."
+	    if [ $val = 0 ]
+	    then
+		echo ""
+		echo "==> Validating the '$stage' stage:"
+		echo ""
+		run_validation $stage
+		val=$?
+	    fi
 
-	(
-	    echo ""
-	    echo "==> Validating the '$stage' stage:"
-	    echo ""
-	    run_validation $stage
-	) >> $out 2>> $err
+	    echo "$msg $val"
+	) >> $out 2>> $err < /dev/null &
+
+	echo 'Continuing in the background...'
+	exit
     fi
     ;;
 

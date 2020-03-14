@@ -1,6 +1,6 @@
 #!/bin/sh
 # simple - CLI for the SIMPLE Framework
-# v0.91 - 2020/03/14
+# v0.92 - 2020/03/14
 # authors: Maarten.Litmaath@cern.ch, Mayank.Sharma@cern.ch
 
 logdir=/var/log/simple
@@ -15,6 +15,8 @@ usage()
     create-template
     pre-compile
     extract-lc
+    generate-key
+    test-ssh
     install
     install-cm
     install-lc CM_hostname
@@ -34,13 +36,15 @@ EOF
 }
 
 cli_conf_dir=~/.simple
+simple_prvkey=$cli_conf_dir/simple_key
+simple_pubkey=$simple_prvkey.pub
 compiler_dir=$cli_conf_dir/simple_grid_yaml_compiler
 compiler_env=$compiler_dir/.env
 installed_pip=$cli_conf_dir/.installed_pip
 installed_compiler=$compiler_dir/.installed_compiler
 installed_virtualenv=$cli_conf_dir/.installed_virtualenv
 installed_git=$cli_conf_dir/.installed_git
-installed_wget=$cli_coonf_dir/.installed_wget
+installed_wget=$cli_conf_dir/.installed_wget
 installed_lc_extractor=$cli_conf_dir/.installed_lc_extractor
 validator_dir=$cli_conf_dir/validator
 installed_validator=$validator_dir/.installed_validator
@@ -67,12 +71,10 @@ cm_i=$sg_i::config_master::simple_installer
 lc_i=$sg_i::lightweight_component::simple_installer
 
 
+mkdir -p $cli_conf_dir || exit
+
 prepare_cli()
 {
-    [ -e $cli_conf_dir ] || (
-	mkdir $cli_conf_dir
-    ) || return
-
     [ -e $installed_pip ] || (
 	mkdir -p $compiler_dir/.temp &&
 	yum install -y python-pip && pip install --upgrade pip &&
@@ -149,9 +151,10 @@ extract-lc)
     (
 	prepare_cli || exit
 
-	[ -e $pre_compiled_conf ] || (
-	    echo "Please execute 'simple pre-compile' to generate $pre_compiled_conf"
-	) || exit
+	[ -e $pre_compiled_conf ] || {
+	    echo "Please run '$0 pre-compile' to generate $pre_compiled_conf" >&2
+	    exit 1
+	}
 
 	[ -e $installed_wget ] || (
 	    yum install -y wget && touch $installed_wget
@@ -171,6 +174,42 @@ extract-lc)
     ) > $out 2> $err
 
     val=$?
+    ;;
+
+###############################################################################
+generate-key)
+    [ -e $lc_file ] || {
+	echo "Please run '$0 extract-lc' to generate $lc_file" >&2
+	exit 1
+    }
+
+    ssh-keygen -q -f $simple_prvkey -P '' || exit
+
+    echo "Please add the public key in $simple_pubkey to your LC hosts:"
+    echo ""
+    cat $lc_file
+    echo ""
+    echo "For example, append it to /root/.ssh/authorized_keys on those hosts,"
+    echo "then run '$0 test-ssh' to check if ssh works from the CM."
+    exit
+    ;;
+
+###############################################################################
+test-ssh)
+    [ -e $simple_pubkey ] || {
+	echo "Please run '$0 generate-key' to generate $simple_pubkey" >&2
+	exit 1
+    }
+
+    for lc in `cat $lc_file`
+    do
+	echo "Trying $lc"
+	ssh -i $simple_prvkey $lc echo success < /dev/null || val=$?
+    done
+
+    [ $val = 0 ] || echo "It failed for at least 1 LC host: please fix that." >&2
+
+    exit $val
     ;;
 
 ###############################################################################
@@ -215,15 +254,17 @@ install)
 	do
 	    echo "Launching on $lc"
 	    lcl=$1-$lc.txt
-	    ssh $lc "$cmd" < /dev/null > $out_$lcl 2> $err_$lcl &
+	    ssh -i $simple_prvkey $lc "$cmd" < /dev/null > $out_$lcl 2> $err_$lcl &
 	    pids="$pids $!"
+	    eval lc_$!=\$lc
 	done
 
 	echo "Waiting for the launched commands to return..."
 
 	while [ ${pids:+x} ]
 	do
-	    sleep 5
+	    echo -n .
+	    sleep 10
 	    tmp=
 
 	    for p in $pids
@@ -234,6 +275,8 @@ install)
 		else
 		    wait $p
 		    let "val |= $?"
+		    echo ''
+		    eval echo LC \$lc_$p finished.
 		fi
 	    done
 

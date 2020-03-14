@@ -1,6 +1,6 @@
 #!/bin/sh
 # simple - CLI for the SIMPLE Framework
-# v0.92 - 2020/03/14
+# v0.93 - 2020/03/14
 # authors: Maarten.Litmaath@cern.ch, Mayank.Sharma@cern.ch
 
 logdir=/var/log/simple
@@ -17,6 +17,7 @@ usage()
     extract-lc
     generate-key
     test-ssh
+    pre-install
     install
     install-cm
     install-lc CM_hostname
@@ -38,6 +39,7 @@ EOF
 cli_conf_dir=~/.simple
 simple_prvkey=$cli_conf_dir/simple_key
 simple_pubkey=$simple_prvkey.pub
+tested_ssh=$cli_conf_dir/.tested_ssh
 compiler_dir=$cli_conf_dir/simple_grid_yaml_compiler
 compiler_env=$compiler_dir/.env
 installed_pip=$cli_conf_dir/.installed_pip
@@ -65,6 +67,7 @@ err_=$logdir/simple-$stamp-err-
 out_=$logdir/simple-$stamp-out-
 warn=3
 
+puppet_repo=https://yum.puppetlabs.com/puppet5/puppet5-release-el-7.noarch.rpm
 mp=/etc/puppetlabs/code/environments/production/modules
 sg_i=simple_grid::install
 cm_i=$sg_i::config_master::simple_installer
@@ -207,15 +210,77 @@ test-ssh)
 	ssh -i $simple_prvkey $lc echo success < /dev/null || val=$?
     done
 
-    [ $val = 0 ] || echo "It failed for at least 1 LC host: please fix that." >&2
+    [ $val = 0 ] && touch $tested_ssh ||
+	echo "It failed for at least 1 LC host: please fix that." >&2
 
     exit $val
     ;;
 
 ###############################################################################
+pre-install)
+    [ -e $tested_ssh ] || {
+	echo "Please run '$0 test-ssh' first" >&2
+	exit 1
+    }
+
+    install_rpm="rpm -ivh $puppet_repo; yum -y install puppet-agent"
+    install_mod="puppet module install maany-simple_grid"
+
+    echo "Pre-installing the CM..."
+
+    (
+	eval "$install_rpm puppetserver && $install_mod"
+    ) > $out 2> $err || val=$?
+
+    if [ $val = 0 ]
+    then
+	echo "Now pre-installing the LC."
+	echo 'This make take a few minutes...'
+
+	cmd="$install_rpm && $install_mod"
+	pids=
+
+	for lc in `cat $lc_file`
+	do
+	    echo "Launching on $lc"
+	    lcl=$1-$lc.txt
+	    ssh -i $simple_prvkey $lc "$cmd" < /dev/null > $out_$lcl 2> $err_$lcl &
+	    pids="$pids $!"
+	    eval lc_$!=\$lc
+	done
+
+	echo "Waiting for the launched commands to return..."
+
+	while [ ${pids:+x} ]
+	do
+	    echo -n .
+	    sleep 10
+	    tmp=
+
+	    for p in $pids
+	    do
+		if kill -0 $p 2> /dev/null
+		then
+		    tmp="$tmp $p"
+		else
+		    wait $p
+		    let "val |= $?"
+		    echo ''
+		    eval echo LC \$lc_$p finished.
+		fi
+	    done
+
+	    pids=$tmp
+	done
+    fi
+    ;;
+
+###############################################################################
 install)
-    echo "This command is not supported yet: please use 'install-cm/lc' instead." >&2
-    exit 1
+    [ -e $tested_ssh ] || {
+	echo "Please run '$0 test-ssh' first" >&2
+	exit 1
+    }
 
     stage=pre_install
     echo "First validating the '$stage' stage..."
@@ -247,7 +312,6 @@ install)
 	c="class{'$lc_i':puppet_master => '$CM'}"
 	cmd="puppet apply --modulepath $mp -e \"$c\""
 
-	echo 'This make take a few minutes...'
 	pids=
 
 	for lc in `cat $lc_file`

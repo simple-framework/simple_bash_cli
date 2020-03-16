@@ -115,8 +115,8 @@ run_validation()
 	$validation_cmd $1
 
     # Uncomment the lines below to ignore validation engine errors
-	# echo "For now just exit 0..."
-	# exit 0
+    # echo "For now just exit 0..."
+    # exit 0
     
     exit $? 
     )

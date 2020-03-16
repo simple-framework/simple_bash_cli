@@ -1,6 +1,6 @@
 #!/bin/sh
 # simple - CLI for the SIMPLE Framework
-# v0.95 - 2020/03/15
+# v0.96 - 2020/03/15
 # authors: Maarten.Litmaath@cern.ch, Mayank.Sharma@cern.ch
 
 logdir=/var/log/simple
@@ -60,7 +60,7 @@ confdir=/etc/simple_grid/site_config
 conf=$confdir/site_level_config_file.yaml
 pre_compiled_conf=$compiler_dir/output.yaml
 compiled_conf=$confdir/augmented_site_level_config_file.yaml
-validation_cmd="simple_infra_validation_engine validate -vvv -f $compiled_conf"
+validation_cmd="simple_infra_validation_engine validate -vvv -f $compiled_conf -i $simple_prvkey -n 10"
 lc_file=/etc/simple_grid/lc
 lc_extractor_url="https://raw.githubusercontent.com/simple-framework/simple_bash_cli/master/extract-lc.py"
 lc_extractor_dir=$cli_conf_dir/lc_extractor

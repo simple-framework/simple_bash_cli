@@ -62,7 +62,7 @@ pre_compiled_conf=$compiler_dir/output.yaml
 compiled_conf=$confdir/augmented_site_level_config_file.yaml
 validation_cmd="simple_infra_validation_engine validate -vvv -f $compiled_conf -i $simple_prvkey -n 10"
 lc_file=/etc/simple_grid/lc
-lc_extractor_url="https://raw.githubusercontent.com/simple-framework/simple_bash_cli/master/extract-lc.py"
+lc_extractor_url="https://raw.githubusercontent.com/simple-framework/simple_bash_cli/current/extract-lc.py"
 lc_extractor_dir=$cli_conf_dir/lc_extractor
 lc_extractor_env=$lc_extractor_dir/.env
 

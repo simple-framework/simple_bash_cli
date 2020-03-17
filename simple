@@ -1,6 +1,6 @@
 #!/bin/sh
 # simple - CLI for the SIMPLE Framework
-# v2.0 - 2020/03/16
+# v2.1 - 2020/03/17
 # authors: Maarten.Litmaath@cern.ch, Mayank.Sharma@cern.ch
 
 logdir=/var/log/simple
@@ -24,7 +24,7 @@ usage()
     install-lc CM_hostname
     cm-stage
     lc-stage
-    check-stage { install | config | pre_deploy | deploy | final }
+    check-stage [ install | config | pre_deploy | deploy | final ]
     rollback-to { config [lc] | pre_deploy | deploy [rmi] }
     pre-deploy
     deploy
@@ -62,6 +62,7 @@ conf=$confdir/site_level_config_file.yaml
 pre_compiled_conf=$compiler_dir/output.yaml
 compiled_conf=$confdir/augmented_site_level_config_file.yaml
 validation_cmd="simple_infra_validation_engine validate -vvv -i $simple_prvkey"
+validation_overrule=0
 lc_file=/etc/simple_grid/lc
 lc_extractor_url="https://raw.githubusercontent.com/simple-framework/simple_bash_cli/current/extract-lc.py"
 lc_extractor_dir=$cli_conf_dir/lc_extractor
@@ -112,13 +113,16 @@ run_validation()
 	) || exit
 
 	source $validator_env/bin/activate
-	$validation_cmd $*
+	$validation_cmd "$@"
+	val=$?
 
-    # Uncomment the lines below to ignore validation engine errors
-    echo "For now just exit 0..."
-    exit 0
+	if [ $val != 0 ] && [ "x$validation_overrule" = x1 ]
+	then
+	    echo "Overruling exit status $val with 0..."
+	    val=0
+	fi
 
-    exit $?
+	exit $val
    )
 }
 
@@ -295,19 +299,15 @@ install)
 	exit 1
     }
 
-    [ -e $lc_file ] || {
-        echo "Please run '$0 extract-lc' first" >&2
-        exit 1
-    }
-
     stage=pre_install
-    targets=$(cat /etc/simple_grid/lc | tr '\n' ',' )
     echo "First validating the '$stage' stage..."
 
     (
 	echo ""
 	echo "==> Validating the '$stage' stage:"
 	echo ""
+
+	targets=$(tr '\n' ',' < $lc_file) &&
 	run_validation -t $targets $stage
     ) > $out 2> $err
 
@@ -375,13 +375,15 @@ lc-stage)
 ###############################################################################
 check-stage)
     stage=${2/-/_}
+    def=any
+    stage=${stage:-$def}
 
     case $stage in
-    install|config|pre_deploy|deploy|final)
+    $def|install|config|pre_deploy|deploy|final)
 	:
 	;;
     *)
-	echo "$0: $1 requires a valid stage name as argument" >&2
+	echo "$0: invalid stage name: $stage" >&2
 	usage
     esac
 
@@ -561,9 +563,10 @@ validate)
 	echo "$0: $1 requires a valid stage as argument" >&2
 	usage
     esac
-    all_args=( "$@" )
-    args="${all_args[@]:2}"
-    run_validation "${args[@]}" $stage > $out 2> $err
+
+    shift 2
+    validation_overrule=0
+    run_validation "$@" $stage > $out 2> $err
     val=$?
     ;;
 

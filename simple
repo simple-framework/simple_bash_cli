@@ -61,7 +61,7 @@ confdir=/etc/simple_grid/site_config
 conf=$confdir/site_level_config_file.yaml
 pre_compiled_conf=$compiler_dir/output.yaml
 compiled_conf=$confdir/augmented_site_level_config_file.yaml
-validation_cmd="simple_infra_validation_engine validate -vvv -f $compiled_conf -i $simple_prvkey -n 10"
+validation_cmd="simple_infra_validation_engine validate -vvv -i $simple_prvkey"
 lc_file=/etc/simple_grid/lc
 lc_extractor_url="https://raw.githubusercontent.com/simple-framework/simple_bash_cli/current/extract-lc.py"
 lc_extractor_dir=$cli_conf_dir/lc_extractor
@@ -112,14 +112,14 @@ run_validation()
 	) || exit
 
 	source $validator_env/bin/activate
-	$validation_cmd $1
+	$validation_cmd $*
 
-    Uncomment the lines below to ignore validation engine errors
+    # Uncomment the lines below to ignore validation engine errors
     echo "For now just exit 0..."
     exit 0
-    
-    exit $? 
-    )
+
+    exit $?
+   )
 }
 
 run_on_lc()
@@ -295,14 +295,20 @@ install)
 	exit 1
     }
 
+    [ -e $lc_file ] || {
+        echo "Please run '$0 extract-lc' first" >&2
+        exit 1
+    }
+
     stage=pre_install
+    targets=$(cat /etc/simple_grid/lc | tr '\n' ',' )
     echo "First validating the '$stage' stage..."
 
     (
 	echo ""
 	echo "==> Validating the '$stage' stage:"
 	echo ""
-	run_validation $stage
+	run_validation -t $targets $stage
     ) > $out 2> $err
 
     val=$?
@@ -555,8 +561,9 @@ validate)
 	echo "$0: $1 requires a valid stage as argument" >&2
 	usage
     esac
-
-    run_validation $stage > $out 2> $err
+    all_args=( "$@" )
+    args="${all_args[@]:2}"
+    run_validation "${args[@]}" $stage > $out 2> $err
     val=$?
     ;;
 
@@ -567,4 +574,3 @@ esac
 
 echo "The command finished with exit code $val (logs in $logdir)"
 exit $val
-

@@ -4,7 +4,8 @@
 # authors: Maarten.Litmaath@cern.ch, Mayank.Sharma@cern.ch
 
 logdir=/var/log/simple
-
+# Add /opt/puppetlabs/bin to path
+[[ ":$PATH:" != *":/opt/puppetlabs/bin:"* ]] && PATH="/opt/puppetlabs/bin:${PATH}"
 mkdir -p $logdir || exit
 
 usage()
@@ -86,7 +87,8 @@ prepare_cli()
 {
     [ -e $installed_pip ] || (
 	mkdir -p $compiler_dir/.temp &&
-	yum install -y python-pip && pip install --upgrade pip &&
+	yum install -y epel-release
+    yum install -y python-pip && pip install --upgrade pip &&
 	touch $installed_pip
     ) || return
 
@@ -287,7 +289,7 @@ pre-install-lc)
     echo "Pre-installing the LC."
     echo 'This make take a few minutes...'
 
-    cmd="$install_rpm && $install_mod"
+    cmd="$install_rpm && $install_mod && echo 'export PATH=/opt/puppetlabs/bin:$PATH' > /etc/environment"
 
     run_on_lc $1 "$cmd"
     ;;

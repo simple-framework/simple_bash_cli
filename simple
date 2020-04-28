@@ -289,7 +289,7 @@ pre-install-lc)
     echo "Pre-installing the LC."
     echo 'This make take a few minutes...'
 
-    cmd="$install_rpm && $install_mod && echo 'export PATH=/opt/puppetlabs/bin:$PATH' > /etc/environment"
+    cmd="$install_rpm && $install_mod && (grep -qF 'puppetlabs' /etc/environment) || (echo 'PATH=$PATH:/opt/puppetlabs/bin' >> /etc/environment)"
 
     run_on_lc $1 "$cmd"
     ;;

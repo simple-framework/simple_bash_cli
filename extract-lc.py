@@ -42,6 +42,6 @@ if __name__ == "__main__":
     site_fqdns = ['ls']
     with open(args['augmented_site_level_config_file'], 'r') as f:
         augmented_site_level_config = yaml.safe_load(f)
-        site_fqdns = [x['fqdn'] for x in augmented_site_level_config['site_infrastructure']]
+        site_fqdns = set([x['fqdn'] for x in augmented_site_level_config['site_infrastructure']])
     with open(args['output'], 'w') as f:
         f.write("\n".join(site_fqdns))

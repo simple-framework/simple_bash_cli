@@ -75,7 +75,7 @@ out_=$logdir/simple-$stamp-out-
 warn=3
 
 puppet_repo=https://yum.puppetlabs.com/puppet5/puppet5-release-el-7.noarch.rpm
-install_rpm="rpm -ivh $puppet_repo; yum -y --disablerepo='*' --enablerepo=puppet5 install puppet-agent"
+install_rpm="rpm -ivh $puppet_repo; yum -y --disablerepo='*' --enablerepo=puppet5 --enablerepo=base --enablerepo=updates install puppet-agent"
 install_mod="(. /etc/profile.d/puppet-agent.sh; puppet module install maany-simple_grid)"
 mp=/etc/puppetlabs/code/environments/production/modules
 sg_i=simple_grid::install
